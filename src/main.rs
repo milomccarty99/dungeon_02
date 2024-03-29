@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
 use std::thread;
+use std::time;
 use std::cmp;
 use std::time::Duration;
 use std::io::{stdin, stdout, Write};
@@ -19,10 +20,12 @@ const NUMB: usize = 8;
 
 struct Env {
     map: [char; WIDTH*HEIGHT], 
+    enemy_hoard: LinkedList<Enemy>,
     x_offset: isize,
     y_offset: isize,
     x_pos: isize,
     y_pos: isize,
+    health: isize,
     au: isize,
 }
 impl Env {
@@ -30,12 +33,15 @@ impl Env {
         let data = room.split("\n").collect::<Vec<_>>();
         let w: usize = data[0].parse::<usize>().expect("integer expected");
         let h: usize = data[1].parse::<usize>().expect("integer expected");
+        //println!("width of {w} and height of {h}");
         let mut this = Env {
             map: ['.'; WIDTH * HEIGHT],
+            enemy_hoard: LinkedList::new(),
             x_offset: 5,
             y_offset: 5,
             x_pos: data[2].parse::<isize>().expect("integer expected for x pos"),
             y_pos: data[3].parse::<isize>().expect("integer expected for y pos"),
+            health: 100,
             au: 10,
         };
         for i in 0..h {
@@ -43,6 +49,9 @@ impl Env {
                 this.map[i * w + j] = data[i + 4].chars().nth(j).unwrap();
             }
         }
+        let mut goblinq: Enemy = Enemy::new();
+        this.enemy_hoard.push_back(goblinq);
+
         this // returns this Env
    }
 
@@ -55,25 +64,42 @@ impl Env {
         for i in 0..HEIGHT {
             for j in 0..WIDTH {
                 write!(stdout(),"{}{}", color::Bg(color::Reset), color::Fg(color::Reset));
-               if (i == self.y_pos.try_into().unwrap() && j == self.x_pos.try_into().unwrap()) 
-               {
-                   let bg = color::Bg(color::Red);
-                   write!(stdout(), "{}@",bg);
-               }
-               else
-               {
-                   let current_char = self.map[i*WIDTH + j];
-                   match current_char {
-                       '1' => write!(stdout(), "{}",color::Bg(color::Green)),
-                       '2' => write!(stdout(), "{}", color::Bg(color::Yellow)),
-                       '3' => write!(stdout(), "{}", color::Bg(color::Red)),
-                       'x' => write!(stdout(), "{}.", color::Bg(color::Reset)),
-                       '0' => write!(stdout(), " "),
-                       '$' => write!(stdout(), "{}$", color::Fg(color::Yellow)),
-                       _ => write!(stdout(), "{}", self.map[i*WIDTH + j]),
-                   };
+                let mut enemy_occupied: bool = false;
+                let mut e_h_iter = self.enemy_hoard.iter();
+                let mut en = e_h_iter.next();
+                while !en.is_none() && !enemy_occupied
+                {
+                    if en.unwrap().xy_pos() == (i, j) {
+                        enemy_occupied = true;
+                        let fg = color::Fg(color::Green);
+                        write!(stdout(), "{}g", fg);
+                        break;
+                    }
+                    en = e_h_iter.next();
+                }
+                if enemy_occupied {
+                    continue;
+                }
+
+                if (i == self.y_pos.try_into().unwrap() && j == self.x_pos.try_into().unwrap()) 
+                {
+                    let bg = color::Bg(color::Red);
+                    write!(stdout(), "{}@",bg);
+                }
+                else
+                {
+                    let current_char = self.map[i*WIDTH + j];
+                    match current_char {
+                        '1' => write!(stdout(), "{}",color::Bg(color::Green)),
+                        '2' => write!(stdout(), "{}", color::Bg(color::Yellow)),
+                        '3' => write!(stdout(), "{}", color::Bg(color::Red)),
+                        'x' => write!(stdout(), "{}.", color::Bg(color::Reset)),
+                        '0' => write!(stdout(), " "),
+                        '$' => write!(stdout(), "{}$", color::Fg(color::Yellow)),
+                        _ => write!(stdout(), "{}", self.map[i*WIDTH + j]),
+                    };
                    //write!(stdout(), "{}", self.map[i*WIDTH + j]);
-               }
+                }
             }
             write!(stdout(), "{}{}", termion::cursor::Left(WIDTH.try_into().unwrap()), termion::cursor::Down(1));
         }
@@ -106,7 +132,126 @@ impl Env {
             },
             _ => (),
         }
-        print!("{}, {} total gold: {}", self.x_pos, self.y_pos, self.au);
+        print!("{}, {} total gold: {}, health: {}, number of enemies: {}", self.x_pos, self.y_pos, self.au, self.health,self.enemy_hoard.len());
+    }
+
+    pub fn next_cycle(&mut self) {
+        //update enemy_hoard
+        let mut new_enemy_hoard: LinkedList<Enemy> = LinkedList::new();
+        while !self.enemy_hoard.is_empty() {
+            let mut current_enemy: Enemy = self.enemy_hoard.pop_front().unwrap();
+            if !current_enemy.is_dead() {
+                let (mut en_x_mov, mut en_y_mov, mut en_atks) = current_enemy.next_pos();
+
+                let tile_move_to: char = self.map[en_y_mov * WIDTH  + en_x_mov];
+                match tile_move_to {
+                    '0' => (), // out of bounds
+                    'x' => {
+                        current_enemy.move_to(en_x_mov, en_y_mov);
+                    },
+                    _ => {},
+                }
+                if en_atks {
+
+                    self.health -= current_enemy.damage; // take attack damage 
+                }
+                new_enemy_hoard.push_back(current_enemy);
+            }
+        }
+        self.enemy_hoard = new_enemy_hoard;
+    }
+
+}
+
+struct Enemy {
+    name: String,
+    creature_type: String,
+    m_b: MovementBehavior,
+    health: isize,
+    damage: isize,
+    x_pos: usize,
+    y_pos: usize,
+}
+
+impl Enemy {
+    pub fn new() -> Self {
+        let mut this = Enemy {
+            name: "qwerty".to_string(),
+            creature_type: "goblin".to_string(),
+            m_b: MovementBehavior::new(),
+            health: 10,
+            damage: 3,
+            x_pos: 25,
+            y_pos: 5,
+        };
+
+
+        this
+    }
+    pub fn is_dead(&mut self) -> bool {
+        return self.health < 0;
+    }
+    
+    pub fn next_pos(&mut self) -> (usize, usize, bool) {
+       self.m_b.next(self.x_pos, self.y_pos, true)
+    }
+
+    pub fn move_to(&mut self, x_pos: usize, y_pos: usize) {
+        self.x_pos = x_pos;
+        self.y_pos = y_pos;
+    }
+    
+    pub fn xy_pos(&self) -> (usize, usize) {
+        (self.x_pos, self.y_pos)
+    }
+
+    pub fn take_damage(&mut self, amount: isize) {
+        self.health += amount;
+    }
+    
+    pub fn attack(&mut self) {
+
+    }
+}
+
+struct MovementBehavior {
+    pattern: String,
+    attack_rate: usize,
+    clock: usize,
+}
+
+impl MovementBehavior {
+    pub fn new() -> Self {
+        let mut this = MovementBehavior {
+            pattern: "jj..kk..ll..hh..1".to_string(),
+            attack_rate: 3,
+            clock: 0,
+        };
+
+        this
+    }
+    
+    pub fn next(&mut self, x_pos: usize, y_pos: usize, next_to_player: bool) -> (usize, usize, bool) {
+        self.clock += 1;
+        let mut mv: char = self.pattern.chars().nth(self.clock % self.pattern.len()).unwrap();
+        let (mut x_mov, mut y_mov) = (x_pos, y_pos);
+        let mut attacks: bool = false;
+        match mv {
+            'h' => { 
+                x_mov -= 1;
+            },
+            'j' => {
+                y_mov += 1;
+            },
+            'k' => {
+                y_mov -= 1;
+            },
+            'l' => {
+                x_mov += 1;
+            },
+            _ => {}
+        }
+        (x_mov, y_mov, attacks)
     }
 
 }
@@ -117,6 +262,7 @@ fn main() {
     let splash = fs::read_to_string("src/splash.txt").expect("File not found");
     println!("{}{}",termion::clear::All, splash);
     let room1: String = fs::read_to_string("src/room1.txt").expect("File not found");
+    let goblinq: Enemy = Enemy::new();
     let stdin = stdin();
     //setting up stdout and going into raw mode
     let mut stdout = stdout().into_raw_mode().unwrap(); // I need to get into raw mode, but it is
@@ -139,9 +285,13 @@ fn main() {
             Key::Char('l') => {env.move_player(3);},
             _ => (),
         }
+        env.next_cycle();
         env.print_board();
         stdout.flush().unwrap();
     }
+    println!("Exiting game");
+    thread::sleep(time::Duration::from_millis(500));
+    write!(stdout,"{}{}", termion::cursor::Goto(1,1), termion::clear::All);
 }
 
 fn quit_game() {
