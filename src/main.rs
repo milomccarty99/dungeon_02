@@ -23,19 +23,20 @@ struct Env {
     y_offset: isize,
     x_pos: isize,
     y_pos: isize,
+    au: isize,
 }
 impl Env {
     pub fn new(room: String) -> Self {
         let data = room.split("\n").collect::<Vec<_>>();
         let w: usize = data[0].parse::<usize>().expect("integer expected");
         let h: usize = data[1].parse::<usize>().expect("integer expected");
-        
         let mut this = Env {
             map: ['.'; WIDTH * HEIGHT],
             x_offset: 5,
             y_offset: 5,
             x_pos: data[2].parse::<isize>().expect("integer expected for x pos"),
             y_pos: data[3].parse::<isize>().expect("integer expected for y pos"),
+            au: 10,
         };
         for i in 0..h {
             for j in 0..w {
@@ -93,11 +94,19 @@ impl Env {
         y_mov = cmp::max(y_mov, 0);
         x_mov = cmp::min((WIDTH-1).try_into().unwrap(), x_mov);
         y_mov = cmp::min((HEIGHT-1).try_into().unwrap(), y_mov);
-        if self.map[(y_mov * WIDTH as isize + x_mov) as usize] != '0' {
+        let c_mov: char = self.map[(y_mov * WIDTH as isize + x_mov) as usize];
+        if c_mov != '0' { 
             self.y_pos = y_mov;
             self.x_pos = x_mov;
         }
-        print!("{}, {}", self.x_pos, self.y_pos);
+        match c_mov {
+            '$' => {
+                self.au += 1;
+                self.map[(self.y_pos * WIDTH as isize + self.x_pos) as usize] = 'x';
+            },
+            _ => (),
+        }
+        print!("{}, {} total gold: {}", self.x_pos, self.y_pos, self.au);
     }
 
 }
